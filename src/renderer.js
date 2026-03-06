@@ -312,6 +312,11 @@ newSnapshotBtn.addEventListener('click', () => {
 
   console.log('Event listeners attached');
 
+  // Refresh list when an auto-snapshot is taken
+  ipcRenderer.on('snapshot-taken', () => {
+    loadSnapshotList();
+  });
+
   // Load snapshots on startup
   console.log('Loading snapshot list...');
   loadSnapshotList();
