@@ -63,15 +63,27 @@ function buildUI() {
       <div class="main-content">
         <div class="sidebar">
           <div class="snapshot-controls">
-            <button id="newSnapshotBtn" class="btn btn-primary">
-              📷 Take New Snapshot
-            </button>
             <input 
               type="text" 
               id="snapshotName" 
               placeholder="Enter snapshot name..." 
               class="input-field"
+              style="margin-bottom: 10px;"
             />
+
+            <div class="test-selector">
+              <p class="test-selector-label">Include in snapshot:</p>
+              <label class="test-option"><input type="checkbox" id="test-cpu"       checked> 💻 CPU &amp; OS</label>
+              <label class="test-option"><input type="checkbox" id="test-memory"    checked> 🧠 Memory</label>
+              <label class="test-option"><input type="checkbox" id="test-processes" checked> ⚙️ Processes</label>
+              <label class="test-option"><input type="checkbox" id="test-network"   checked> 🌐 Network</label>
+              <label class="test-option"><input type="checkbox" id="test-disk"      checked> 💾 Disk &amp; FS</label>
+              <label class="test-option"><input type="checkbox" id="test-users"     checked> 👤 Users</label>
+            </div>
+
+            <button id="newSnapshotBtn" class="btn btn-primary" style="margin-top: 10px;">
+              📷 Take Snapshot
+            </button>
           </div>
 
           <div class="snapshot-list-container">
@@ -93,6 +105,7 @@ function buildUI() {
                 <h2 id="detailTitle">Snapshot Details</h2>
                 <p id="detailTimestamp" class="timestamp"></p>
                 <div id="integrityInfo" class="integrity-info"></div>
+                <div id="testsRunBadges" class="tests-run-badges"></div>
               </div>
               <div class="header-buttons">
                 <select id="compareSelect" class="input-field" style="max-width: 200px;">
@@ -233,6 +246,16 @@ function initializeApp() {
   integrityInfo = document.getElementById('integrityInfo');
   uploadBtn = document.getElementById('uploadBtn');
 
+  // Test selector checkboxes
+  const testCheckboxes = {
+    cpu:       document.getElementById('test-cpu'),
+    memory:    document.getElementById('test-memory'),
+    processes: document.getElementById('test-processes'),
+    network:   document.getElementById('test-network'),
+    disk:      document.getElementById('test-disk'),
+    users:     document.getElementById('test-users'),
+  };
+
   console.log('DOM elements retrieved');
   console.log('newSnapshotBtn:', !!newSnapshotBtn);
   console.log('snapshotList:', !!snapshotList);
@@ -263,8 +286,24 @@ newSnapshotBtn.addEventListener('click', () => {
     String(now.getSeconds()).padStart(2, '0');
 
   const name = snapshotNameInput.value.trim() || "snapshot_" + formatted;
-  
-  takeNewSnapshot(name);
+
+  // Read which categories are selected
+  const tests = {
+    cpu:       testCheckboxes.cpu?.checked       ?? true,
+    memory:    testCheckboxes.memory?.checked    ?? true,
+    processes: testCheckboxes.processes?.checked ?? true,
+    network:   testCheckboxes.network?.checked   ?? true,
+    disk:      testCheckboxes.disk?.checked      ?? true,
+    users:     testCheckboxes.users?.checked     ?? true,
+  };
+
+  // Require at least one test to be selected
+  if (!Object.values(tests).some(Boolean)) {
+    alert('Please select at least one category to include in the snapshot.');
+    return;
+  }
+
+  takeNewSnapshot(name, tests);
   snapshotNameInput.value = '';
 });
 
@@ -311,11 +350,6 @@ newSnapshotBtn.addEventListener('click', () => {
   });
 
   console.log('Event listeners attached');
-
-  // Refresh list when an auto-snapshot is taken
-  ipcRenderer.on('snapshot-taken', () => {
-    loadSnapshotList();
-  });
 
   // Load snapshots on startup
   console.log('Loading snapshot list...');
@@ -395,24 +429,48 @@ function displaySnapshot(data) {
     `;
   }
 
+  // Display which tests were run as badges
+  const badgesEl = document.getElementById('testsRunBadges');
+  if (badgesEl) {
+    const run = data.metadata?.tests_run;
+    if (run) {
+      const labels = { cpu: '💻 CPU & OS', memory: '🧠 Memory', processes: '⚙️ Processes', network: '🌐 Network', disk: '💾 Disk', users: '👤 Users' };
+      badgesEl.innerHTML = Object.entries(labels).map(([key, label]) =>
+        `<span class="test-badge ${run[key] ? 'badge-on' : 'badge-off'}">${label}</span>`
+      ).join('');
+    } else {
+      // Older snapshot captured before tests_run metadata existed — assume all ran
+      badgesEl.innerHTML = '<span class="test-badge badge-on">All categories</span>';
+    }
+  }
+
   // System info
-  document.getElementById('cpuManufacturer').textContent = data.system.cpu_manufacturer || 'N/A';
-  document.getElementById('cpuBrand').textContent = data.system.cpu_brand || 'N/A';
-  document.getElementById('cpuCores').textContent = data.system.cpu_cores || 'N/A';
-  document.getElementById('totalMemory').textContent = `${data.system.total_memory_gb} GB (${data.system.used_memory_gb} GB used)`;
-  document.getElementById('osInfo').textContent = `${data.system.os_distro || 'N/A'} (${data.system.os_release || 'N/A'})`;
-  document.getElementById('diskInfo').textContent = `${data.system.total_disk_size_gb} GB`;
+  const run = data.metadata?.tests_run || {};
+  const skipped = (msg) => `<span style="color:#bbb;font-style:italic;font-size:13px;">— ${msg} —</span>`;
+
+  document.getElementById('cpuManufacturer').textContent = data.system.cpu_manufacturer || (run.cpu === false ? 'Not collected' : 'N/A');
+  document.getElementById('cpuBrand').textContent = data.system.cpu_brand || (run.cpu === false ? 'Not collected' : 'N/A');
+  document.getElementById('cpuCores').textContent = data.system.cpu_cores || (run.cpu === false ? 'Not collected' : 'N/A');
+  document.getElementById('totalMemory').textContent = run.memory === false
+    ? 'Not collected'
+    : `${data.system.total_memory_gb} GB (${data.system.used_memory_gb} GB used)`;
+  document.getElementById('osInfo').textContent = run.cpu === false
+    ? 'Not collected'
+    : `${data.system.os_distro || 'N/A'} (${data.system.os_release || 'N/A'})`;
+  document.getElementById('diskInfo').textContent = run.disk === false
+    ? 'Not collected'
+    : `${data.system.total_disk_size_gb} GB`;
 
   // Network Interfaces
   const networkInterfaces = document.getElementById('networkInterfaces');
   networkInterfaces.innerHTML = '';
-  if (data.network && data.network.interfaces) {
+  if (run.network === false) {
+    networkInterfaces.innerHTML = skipped('Network not collected');
+  } else if (data.network && data.network.interfaces) {
     data.network.interfaces.slice(0, 5).forEach(iface => {
       const item = document.createElement('div');
       item.className = 'detail-item';
-      item.innerHTML = `
-        <strong>${iface.iface}</strong>: ${iface.ip4 || 'N/A'} (${iface.type || 'N/A'})
-      `;
+      item.innerHTML = `<strong>${iface.iface}</strong>: ${iface.ip4 || 'N/A'} (${iface.type || 'N/A'})`;
       networkInterfaces.appendChild(item);
     });
   }
@@ -420,13 +478,13 @@ function displaySnapshot(data) {
   // Listening Ports
   const listeningPorts = document.getElementById('listeningPorts');
   listeningPorts.innerHTML = '';
-  if (data.network && data.network.listening_ports) {
+  if (run.network === false) {
+    listeningPorts.innerHTML = skipped('Network not collected');
+  } else if (data.network && data.network.listening_ports) {
     data.network.listening_ports.slice(0, 10).forEach(port => {
       const item = document.createElement('div');
       item.className = 'detail-item';
-      item.innerHTML = `
-        <strong>${port.process_name || 'Unknown'}</strong>: ${port.protocol.toUpperCase()} ${port.local_port}
-      `;
+      item.innerHTML = `<strong>${port.process_name || 'Unknown'}</strong>: ${port.protocol.toUpperCase()} ${port.local_port}`;
       listeningPorts.appendChild(item);
     });
   }
@@ -434,19 +492,23 @@ function displaySnapshot(data) {
   // File System Info
   const filesystemInfo = document.getElementById('filesystemInfo');
   filesystemInfo.innerHTML = '';
-  if (data.system && data.system.filesystem_info) {
+  if (run.disk === false) {
+    filesystemInfo.innerHTML = skipped('Disk & filesystem not collected');
+  } else if (data.system && data.system.filesystem_info) {
     data.system.filesystem_info.slice(0, 5).forEach(fs => {
       const item = document.createElement('div');
       item.className = 'detail-item';
-      item.innerHTML = `
-        <strong>${fs.mount}</strong>: ${fs.used_gb}GB / ${fs.size_gb}GB (${fs.use_percent}% used)
-      `;
+      item.innerHTML = `<strong>${fs.mount}</strong>: ${fs.used_gb}GB / ${fs.size_gb}GB (${fs.use_percent}% used)`;
       filesystemInfo.appendChild(item);
     });
   }
 
   // Processes
-  renderProcesses(data.running_processes);
+  if (run.processes === false) {
+    processList.innerHTML = skipped('Processes not collected in this snapshot');
+  } else {
+    renderProcesses(data.running_processes);
+  }
 }
 
 // Render processes list
@@ -483,7 +545,7 @@ function filterProcesses(query) {
 }
 
 // Take a new snapshot
-async function takeNewSnapshot(name) {
+async function takeNewSnapshot(name, tests = {}) {
   if (!ipcRenderer) {
     console.error('ipcRenderer not available!');
     alert('IPC not available. Please check console.');
@@ -494,7 +556,7 @@ async function takeNewSnapshot(name) {
   newSnapshotBtn.textContent = '⏳ Taking snapshot...';
   
   try {
-    const data = await ipcRenderer.invoke('take-snapshot', name);
+    const data = await ipcRenderer.invoke('take-snapshot', name, tests);
     if (data) {
       await loadSnapshotList();
       await loadSnapshot(name);
@@ -504,7 +566,7 @@ async function takeNewSnapshot(name) {
     alert('Error taking snapshot. Check console for details.');
   } finally {
     newSnapshotBtn.disabled = false;
-    newSnapshotBtn.textContent = '📷 Take New Snapshot';
+    newSnapshotBtn.textContent = '📷 Take Snapshot';
   }
 }
 
@@ -535,6 +597,23 @@ async function performComparison(baselineName, afterName) {
   console.log(`Comparing ${baselineName} with ${afterName}...`);
   
   try {
+    // Warn if the two snapshots collected different categories
+    const [baselineData, afterData] = await Promise.all([
+      ipcRenderer.invoke('load-snapshot', baselineName),
+      ipcRenderer.invoke('load-snapshot', afterName),
+    ]);
+
+    const baselineRun = baselineData?.metadata?.tests_run;
+    const afterRun = afterData?.metadata?.tests_run;
+    if (baselineRun && afterRun) {
+      const mismatched = Object.keys(baselineRun).filter(k => baselineRun[k] !== afterRun[k]);
+      if (mismatched.length > 0) {
+        const labels = { cpu: 'CPU & OS', memory: 'Memory', processes: 'Processes', network: 'Network', disk: 'Disk', users: 'Users' };
+        const names = mismatched.map(k => labels[k] || k).join(', ');
+        alert(`⚠️ Warning: These snapshots collected different categories (${names}). Comparison results may be incomplete or misleading.`);
+      }
+    }
+
     const comparison = await ipcRenderer.invoke('compare-snapshots', baselineName, afterName);
     
     if (comparison) {
