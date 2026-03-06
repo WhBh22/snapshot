@@ -31,33 +31,46 @@ function makeRequest(url, options, body) {
 }
 
 // 1. The Snapshot Function
-async function takeSnapshot(filename) {
+async function takeSnapshot(filename, tests = {}) {
+  // Default every category to true so existing callers still work
+  const run = {
+    cpu:       tests.cpu       ?? true,
+    memory:    tests.memory    ?? true,
+    processes: tests.processes ?? true,
+    network:   tests.network   ?? true,
+    disk:      tests.disk      ?? true,
+    users:     tests.users     ?? true,
+  };
+
+  console.log('Tests to run:', run);
+
   try {
     console.log(`Taking snapshot: ${filename}...`);
     
-    // Grab comprehensive system data
+    // Grab only the requested data categories
     console.log('Fetching CPU info...');
-    const cpu = await si.cpu();
+    const cpu = run.cpu ? await si.cpu() : {};
     console.log('Fetching memory info...');
-    const mem = await si.mem();
+    const mem = run.memory ? await si.mem() : {};
+    
     console.log('Fetching processes...');
-    const processes = await si.processes();
-    console.log(`Found ${processes.list.length} processes`);
+    const processes = run.processes ? await si.processes() : { list: [] };
+    if (run.processes) console.log(`Found ${processes.list.length} processes`);
     
     console.log('Fetching network interfaces...');
-    const networkInterfaces = await si.networkInterfaces();
+    const networkInterfaces = run.network ? await si.networkInterfaces() : [];
     console.log('Fetching network stats...');
-    const networkStats = await si.networkStats();
+    const networkStats = run.network ? await si.networkStats() : [];
     console.log('Fetching open connections...');
-    const networkConnections = await si.networkConnections();
+    const networkConnections = run.network ? await si.networkConnections() : [];
     console.log('Fetching disk layout...');
-    const diskLayout = await si.diskLayout();
+    const diskLayout = run.disk ? await si.diskLayout() : [];
     console.log('Fetching file system size...');
-    const fsSize = await si.fsSize();
+    const fsSize = run.disk ? await si.fsSize() : [];
     console.log('Fetching OS info...');
-    const osInfo = await si.osInfo();
+    const osInfo = run.cpu ? await si.osInfo() : {};
     console.log('Fetching users...');
-    const users = await si.users();
+    const users = run.users ? await si.users() : [];
 
     // Format it into a comprehensive JSON object
     const snapshotData = {
@@ -66,7 +79,8 @@ async function takeSnapshot(filename) {
         timestamp: new Date().toISOString(),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         snapshot_version: '2.0',
-        data_collection_method: 'systeminformation library'
+        data_collection_method: 'systeminformation library',
+        tests_run: run
       },
       system: {
         // CPU Info
@@ -201,8 +215,8 @@ const createWindow = () => {
 };
 
 // 4. Set up IPC handlers to communicate with renderer
-ipcMain.handle('take-snapshot', async (event, filename) => {
-  return await takeSnapshot(filename);
+ipcMain.handle('take-snapshot', async (event, filename, tests) => {
+  return await takeSnapshot(filename, tests);
 });
 
 ipcMain.handle('list-snapshots', async (event) => {
@@ -452,7 +466,8 @@ ipcMain.handle('list-remote-snapshots', async (event) => {
 });
 
 let autoSnapshotInterval = null;
-let autoSnapshotMinutes = 10;
+let autoSnapshotMinutes = 5;
+let autoSnapshotEnabled = false;
 
 function formatSnapshotTimestamp() {
   const now = new Date();
@@ -469,6 +484,7 @@ function startAutoSnapshot(minutes) {
     autoSnapshotMinutes = minutes;
   }
   stopAutoSnapshot();
+  autoSnapshotEnabled = true;
 
   // Take one immediately on start
   takeSnapshot(`snapshot_${formatSnapshotTimestamp()}_auto`)
@@ -490,6 +506,7 @@ function stopAutoSnapshot() {
     clearInterval(autoSnapshotInterval);
     autoSnapshotInterval = null;
   }
+  autoSnapshotEnabled = false;
 }
 
 ipcMain.handle('start-auto-snapshot', (event, minutes) => {
@@ -510,12 +527,12 @@ ipcMain.handle('set-auto-snapshot-interval', (event, minutes) => {
   return true;
 });
 
-ipcMain.handle('get-auto-snapshot-interval', () => {
-  return autoSnapshotMinutes;
+ipcMain.handle('get-auto-snapshot-settings', () => {
+  return { enabled: autoSnapshotEnabled, minutes: autoSnapshotMinutes };
 });
 
 // 3. Run the app and test our function
 app.whenReady().then(() => {
   createWindow();
-  startAutoSnapshot();
 });
+
